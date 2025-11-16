@@ -47,6 +47,38 @@ A cutting-edge, production-ready USSD (Unstructured Supplementary Service Data) 
 └─────────────────────────────────────────────┘
 ```
 
+### Architectural Patterns 🏛️
+
+This gateway employs **advanced architectural patterns** for enterprise-grade quality:
+
+#### **Domain-Driven Design (DDD)**
+- **Bounded Contexts**: Session Management, Menu Navigation, Transaction Processing, Subscriber Management
+- **Aggregates & Entities**: Rich domain models with business invariants
+- **Value Objects**: Immutable types (MSISDN, Money, SessionState)
+- **Domain Events**: First-class domain occurrences for event-driven architecture
+- **Ubiquitous Language**: Shared vocabulary across business and technical teams
+
+#### **Event-Driven Architecture**
+- **Event Sourcing**: Store all state changes as immutable events
+- **CQRS (Command Query Responsibility Segregation)**: Separate write and read models
+- **Event Store**: Complete audit trail with event replay capability
+- **Saga Pattern**: Distributed transaction coordination with compensation
+- **Event Choreography**: Loosely coupled microservices communication
+
+#### **Hexagonal Architecture (Ports & Adapters)**
+- **Domain Core Isolation**: Business logic independent of infrastructure
+- **Input Ports**: Use cases (InitiateUssdSession, ProcessTransaction)
+- **Output Ports**: Interfaces (EventStore, PaymentService, Cache)
+- **Adapters**: Protocol adapters (SS7, HTTP), infrastructure (PostgreSQL, Redis, NATS)
+- **Dependency Inversion**: Core depends on abstractions, not implementations
+
+**Benefits:**
+- ✅ **Testability**: Mock ports for unit testing domain logic
+- ✅ **Flexibility**: Swap adapters without changing core business logic
+- ✅ **Auditability**: Complete event history for compliance
+- ✅ **Scalability**: Independent scaling of read and write models
+- ✅ **Maintainability**: Clear separation of concerns
+
 ### 1. **Protocol Gateway** ⭐ _ENHANCED_
 Entry point for all USSD traffic with **enterprise-grade workflow orchestration**.
 
@@ -117,7 +149,8 @@ Resilient gateway to external services with circuit breaking.
 | [02-SESSION-MANAGER-SERVICE.md](./docs/02-SESSION-MANAGER-SERVICE.md) | Session Manager detailed design |
 | [03-MENU-ENGINE-SERVICE.md](./docs/03-MENU-ENGINE-SERVICE.md) | Menu Engine detailed design |
 | [04-INTEGRATION-HUB-SERVICE.md](./docs/04-INTEGRATION-HUB-SERVICE.md) | Integration Hub detailed design |
-| [05-ADVANCED-PROTOCOL-GATEWAY-FEATURES.md](./docs/05-ADVANCED-PROTOCOL-GATEWAY-FEATURES.md) | ⭐ **NEW** - Workflow engine, policy system, I/O mapping |
+| [05-ADVANCED-PROTOCOL-GATEWAY-FEATURES.md](./docs/05-ADVANCED-PROTOCOL-GATEWAY-FEATURES.md) | ⭐ Workflow engine, policy system, I/O mapping |
+| [06-DDD-EVENT-DRIVEN-HEXAGONAL-ARCHITECTURE.md](./docs/06-DDD-EVENT-DRIVEN-HEXAGONAL-ARCHITECTURE.md) | ⭐ **NEW** - DDD, Event Sourcing, CQRS, Hexagonal Architecture |
 
 ### Configuration Examples
 
@@ -127,6 +160,7 @@ Resilient gateway to external services with circuit breaking.
 | [policy-definitions.yaml](./examples/policy-definitions.yaml) | Rate limiting, routing, security, compliance policies |
 | [ss7_to_canonical.json](./examples/io-mappings/ss7_to_canonical.json) | SS7/MAP → Canonical format transformation |
 | [canonical_to_ss7.json](./examples/io-mappings/canonical_to_ss7.json) | Canonical → SS7/MAP response transformation |
+| [ddd-implementation-example.rs](./examples/ddd-implementation-example.rs) | ⭐ **NEW** - Complete DDD + Event Sourcing + Hexagonal Architecture implementation |
 
 ## 🛠️ Technology Stack
 
