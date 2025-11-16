@@ -1,0 +1,573 @@
+# Complete Workflow Configuration Example
+# This demonstrates the power of the Advanced Protocol Gateway
+
+# ============================================================================
+# WORKFLOW: Complete USSD Request Processing Pipeline
+# ============================================================================
+workflow:
+  name: "premium_ussd_processor"
+  version: "2.0"
+  description: "Enterprise-grade USSD processing with enrichment, validation, and adaptive routing"
+
+  # Global workflow configuration
+  config:
+    max_execution_time_ms: 30000
+    enable_parallel_stages: true
+    enable_distributed_tracing: true
+    log_level: "info"
+
+  # Workflow-level variables
+  variables:
+    default_language: "en"
+    max_retry_attempts: 3
+    cache_ttl_seconds: 300
+    enable_ab_testing: true
+    canary_percentage: 10
+
+  # ============================================================================
+  # STAGE PIPELINE
+  # ============================================================================
+  stages:
+    # --------------------------------------------------------------------------
+    # STAGE 1: PROTOCOL DETECTION & NORMALIZATION
+    # --------------------------------------------------------------------------
+    - name: "detect_protocol"
+      type: "protocol_detector"
+      description: "Automatically detect incoming protocol and normalize"
+      enabled: true
+      config:
+        supported_protocols:
+          - ss7_map
+          - http_rest
+          - smpp
+          - grpc
+        auto_detect: true
+        fallback_protocol: "http_rest"
+
+    # --------------------------------------------------------------------------
+    # STAGE 2: INPUT VALIDATION (Specification-based)
+    # --------------------------------------------------------------------------
+    - name: "validate_against_spec"
+      type: "spec_validator"
+      description: "Validate request against OpenAPI/Protocol Buffer specs"
+      enabled: true
+      config:
+        spec_id: "ussd_gateway_api"
+        spec_version: "v1.2.0"
+        strict_mode: true
+        validation_rules:
+          - field: "msisdn"
+            type: "string"
+            pattern: "^\\+?254[17]\\d{8}$"
+            required: true
+            error_message: "Invalid Kenyan mobile number format"
+          - field: "service_code"
+            type: "string"
+            pattern: "^\\*[0-9#]+#$"
+            required: true
+          - field: "input"
+            type: "string"
+            max_length: 182
+            sanitize: true
+      on_validation_failure:
+        action: "reject"
+        response_template: "validation_error_template"
+        log_event: true
+
+    # --------------------------------------------------------------------------
+    # STAGE 3: APPLY SECURITY POLICIES
+    # --------------------------------------------------------------------------
+    - name: "apply_security_policies"
+      type: "policy_evaluator"
+      description: "Execute security and compliance policies"
+      enabled: true
+      config:
+        policies:
+          - id: "sql_injection_prevention"
+            type: "security"
+            enabled: true
+          - id: "xss_prevention"
+            type: "security"
+            enabled: true
+          - id: "gdpr_compliance"
+            type: "compliance"
+            enabled: true
+          - id: "pci_dss_compliance"
+            type: "compliance"
+            enabled: true
+      on_policy_violation:
+        action: "reject"
+        response_code: "SECURITY_VIOLATION"
+        alert: true
+        alert_severity: "high"
+
+    # --------------------------------------------------------------------------
+    # STAGE 4: RATE LIMITING (Multi-level)
+    # --------------------------------------------------------------------------
+    - name: "apply_rate_limiting"
+      type: "policy_evaluator"
+      description: "Apply adaptive rate limiting policies"
+      enabled: true
+      config:
+        policies:
+          - id: "global_rate_limit"
+            type: "rate_limit"
+            rules:
+              - name: "global_rps"
+                limit_type: "token_bucket"
+                key_template: "global"
+                limit: 100000
+                window: "1s"
+                burst_size: 10000
+
+              - name: "per_msisdn_rpm"
+                limit_type: "sliding_window"
+                key_template: "msisdn:{{request.msisdn}}"
+                limit: 10
+                window: "1m"
+                on_exceeded:
+                  action: "throttle"
+                  delay_ms: 500
+
+              - name: "per_operator_rps"
+                limit_type: "adaptive"
+                key_template: "operator:{{request.operator_code}}"
+                limit: 10000
+                window: "1s"
+                adapt_to_system_load: true
+
+    # --------------------------------------------------------------------------
+    # STAGE 5: PROTOCOL TRANSFORMATION
+    # --------------------------------------------------------------------------
+    - name: "transform_to_canonical"
+      type: "transformer"
+      description: "Transform from source protocol to canonical format"
+      enabled: true
+      config:
+        mapping_file: "mappings/{{protocol}}_to_canonical.json"
+        mapping_version: "1.0"
+        enable_caching: true
+        cache_ttl: 3600
+        transformations:
+          - source: "$.raw.ussdString"
+            target: "$.canonical.input"
+            transform: "decode_gsm7"
+          - source: "$.raw.msisdn"
+            target: "$.canonical.msisdn"
+            transform: "normalize_e164"
+          - source: "$.raw.invokeId"
+            target: "$.canonical.session_id"
+            transform: "generate_session_id"
+
+    # --------------------------------------------------------------------------
+    # STAGE 6: PARALLEL ENRICHMENT (Performance Optimized)
+    # --------------------------------------------------------------------------
+    - name: "enrich_request"
+      type: "enricher"
+      description: "Enrich request with contextual data (parallel execution)"
+      enabled: true
+      parallel: true  # Execute enrichments in parallel
+      config:
+        enrichments:
+          # Enrichment 1: Subscriber Information
+          - name: "subscriber_info"
+            type: "lookup"
+            source: "redis"
+            key_template: "subscriber:{{canonical.msisdn}}"
+            target_field: "subscriber"
+            fallback:
+              source: "database"
+              query: "SELECT * FROM subscribers WHERE msisdn = $1"
+            timeout_ms: 500
+            cache_result: true
+
+          # Enrichment 2: Geo-location
+          - name: "geo_location"
+            type: "geoip"
+            source_field: "canonical.msisdn"
+            target_field: "geo"
+            attributes:
+              - country
+              - city
+              - timezone
+              - operator
+            timeout_ms: 100
+
+          # Enrichment 3: Account Balance (if premium user)
+          - name: "account_balance"
+            type: "api_call"
+            condition: "subscriber.tier == 'PREMIUM'"
+            endpoint: "http://core-banking-api:8080/balance"
+            method: "POST"
+            body_template: |
+              {
+                "account_id": "{{subscriber.account_id}}",
+                "currency": "KES"
+              }
+            target_field: "balance"
+            timeout_ms: 2000
+            retry:
+              max_attempts: 2
+              backoff: "exponential"
+            cache:
+              enabled: true
+              ttl: 60
+              cache_key: "balance:{{subscriber.account_id}}"
+
+          # Enrichment 4: Session History
+          - name: "session_history"
+            type: "lookup"
+            source: "redis"
+            key_template: "session_history:{{canonical.msisdn}}"
+            target_field: "history"
+            timeout_ms: 200
+
+          # Enrichment 5: Compute contextual fields
+          - name: "computed_fields"
+            type: "compute"
+            expressions:
+              - target: "timestamp_utc"
+                expression: "now()"
+              - target: "business_hours"
+                expression: "isBusinessHours(geo.timezone)"
+              - target: "is_weekend"
+                expression: "isWeekend()"
+              - target: "user_tier"
+                expression: "subscriber.tier ?? 'STANDARD'"
+
+    # --------------------------------------------------------------------------
+    # STAGE 7: BUSINESS RULE EVALUATION
+    # --------------------------------------------------------------------------
+    - name: "evaluate_business_rules"
+      type: "rule_engine"
+      description: "Execute business rules and make routing decisions"
+      enabled: true
+      config:
+        rules:
+          # Rule 1: Check if user is blacklisted
+          - name: "check_blacklist"
+            condition: "subscriber.status == 'BLACKLISTED'"
+            action: "reject"
+            response_template: "account_suspended_template"
+            priority: 100
+
+          # Rule 2: Check service availability
+          - name: "check_service_hours"
+            condition: "!business_hours && !subscriber.tier == 'VIP'"
+            action: "reject"
+            response_template: "service_unavailable_template"
+            priority: 90
+
+          # Rule 3: Insufficient balance check
+          - name: "check_balance"
+            condition: "balance.amount < 1.00 && request.service_code == '*234#'"
+            action: "route_to_alternative"
+            alternative_menu: "low_balance_menu"
+            priority: 80
+
+    # --------------------------------------------------------------------------
+    # STAGE 8: ADAPTIVE ROUTING
+    # --------------------------------------------------------------------------
+    - name: "adaptive_route"
+      type: "router"
+      description: "Intelligent routing based on multiple factors"
+      enabled: true
+      config:
+        routing_strategy: "multi_factor"
+        routing_rules:
+          # Priority 1: VIP customers to premium backend
+          - name: "vip_routing"
+            condition: "subscriber.tier == 'VIP'"
+            targets:
+              - backend: "session_manager_premium"
+                weight: 100
+                metadata:
+                  sla: "p99_10ms"
+                  priority: "high"
+            priority: 100
+
+          # Priority 2: Geo-based routing
+          - name: "geo_routing"
+            condition: "geo.country == 'KE'"
+            targets:
+              - backend: "session_manager_kenya_central"
+                weight: 60
+              - backend: "session_manager_kenya_east"
+                weight: 40
+            priority: 90
+
+          # Priority 3: A/B Testing (Canary deployment)
+          - name: "canary_deployment"
+            condition: "enable_ab_testing == true"
+            targets:
+              - backend: "session_manager_v2"
+                weight: "{{canary_percentage}}"
+                metadata:
+                  version: "2.0.0"
+                  feature_flags: ["new_menu_engine", "enhanced_session"]
+              - backend: "session_manager_v1"
+                weight: "{{100 - canary_percentage}}"
+                metadata:
+                  version: "1.5.0"
+            priority: 80
+
+          # Priority 4: Load-based routing
+          - name: "load_balanced_routing"
+            condition: "true"
+            targets:
+              - backend: "session_manager_pool"
+                selection_strategy: "least_connections"
+                health_check: true
+            priority: 50
+
+        # Fallback routing
+        fallback:
+          backend: "session_manager_fallback"
+          timeout_ms: 15000
+
+    # --------------------------------------------------------------------------
+    # STAGE 9: PRE-FLIGHT CHECKS
+    # --------------------------------------------------------------------------
+    - name: "pre_flight_checks"
+      type: "health_checker"
+      description: "Verify downstream service health before routing"
+      enabled: true
+      config:
+        checks:
+          - service: "session_manager"
+            check_type: "tcp_connect"
+            timeout_ms: 100
+          - service: "menu_engine"
+            check_type: "http_health"
+            endpoint: "/health"
+            timeout_ms: 200
+          - service: "integration_hub"
+            check_type: "grpc_health"
+            timeout_ms: 200
+        on_unhealthy:
+          action: "route_to_fallback"
+          log_alert: true
+
+    # --------------------------------------------------------------------------
+    # STAGE 10: REQUEST FORWARDING
+    # --------------------------------------------------------------------------
+    - name: "forward_to_session_manager"
+      type: "grpc_client"
+      description: "Forward processed request to Session Manager"
+      enabled: true
+      config:
+        service: "session_manager"
+        method: "ProcessRequest"
+        timeout_ms: 10000
+        retry:
+          max_attempts: 2
+          backoff: "exponential"
+          retryable_errors:
+            - "UNAVAILABLE"
+            - "DEADLINE_EXCEEDED"
+        circuit_breaker:
+          enabled: true
+          failure_threshold: 5
+          timeout_seconds: 60
+
+    # --------------------------------------------------------------------------
+    # STAGE 11: RESPONSE TRANSFORMATION
+    # --------------------------------------------------------------------------
+    - name: "transform_response"
+      type: "transformer"
+      description: "Transform canonical response back to source protocol"
+      enabled: true
+      config:
+        mapping_file: "mappings/canonical_to_{{protocol}}.json"
+        transformations:
+          - source: "$.response.message"
+            target: "$.raw.ussdString"
+            transform: "encode_gsm7"
+          - source: "$.response.session_id"
+            target: "$.raw.invokeId"
+            transform: "to_string"
+          - source: "$.response.continue"
+            target: "$.raw.messageType"
+            transform: "map_message_type"
+
+    # --------------------------------------------------------------------------
+    # STAGE 12: RESPONSE ENRICHMENT
+    # --------------------------------------------------------------------------
+    - name: "enrich_response"
+      type: "enricher"
+      description: "Add response metadata and tracking info"
+      enabled: true
+      config:
+        enrichments:
+          - type: "compute"
+            target: "response.timestamp"
+            expression: "now()"
+          - type: "compute"
+            target: "response.duration_ms"
+            expression: "elapsed_time()"
+          - type: "compute"
+            target: "response.trace_id"
+            expression: "trace_id()"
+
+    # --------------------------------------------------------------------------
+    # STAGE 13: APPLY RESPONSE POLICIES
+    # --------------------------------------------------------------------------
+    - name: "apply_response_policies"
+      type: "policy_evaluator"
+      description: "Apply response-level policies (caching, compression)"
+      enabled: true
+      config:
+        policies:
+          - id: "response_caching_policy"
+            type: "caching"
+            rules:
+              - condition: "response.cacheable == true"
+                cache_key: "response:{{request_id}}"
+                ttl: 300
+
+          - id: "pii_masking_policy"
+            type: "compliance"
+            rules:
+              - field: "response.msisdn"
+                mask: "***-***-{{last_4}}"
+
+    # --------------------------------------------------------------------------
+    # STAGE 14: ANALYTICS & TELEMETRY
+    # --------------------------------------------------------------------------
+    - name: "track_analytics"
+      type: "analytics"
+      description: "Collect metrics, logs, and traces"
+      enabled: true
+      async: true  # Don't block response
+      config:
+        events:
+          # Metric: Request processed
+          - type: "metric"
+            name: "ussd_request_processed_total"
+            metric_type: "counter"
+            labels:
+              operator: "{{request.operator_code}}"
+              protocol: "{{protocol}}"
+              tier: "{{subscriber.tier}}"
+              country: "{{geo.country}}"
+
+          # Metric: Request duration
+          - type: "metric"
+            name: "ussd_request_duration_seconds"
+            metric_type: "histogram"
+            value: "{{elapsed_time_seconds}}"
+            labels:
+              stage: "complete"
+              backend: "{{routed_backend}}"
+
+          # Log: Structured request log
+          - type: "log"
+            level: "info"
+            message: "USSD request processed successfully"
+            fields:
+              request_id: "{{request_id}}"
+              msisdn: "{{masked_msisdn}}"
+              duration_ms: "{{elapsed_time}}"
+              backend: "{{routed_backend}}"
+
+          # Trace: Distributed trace span
+          - type: "trace"
+            span_name: "protocol_gateway.process_request"
+            attributes:
+              request_id: "{{request_id}}"
+              protocol: "{{protocol}}"
+              tier: "{{subscriber.tier}}"
+
+          # Custom event for billing
+          - type: "custom_event"
+            event_name: "ussd_billing_event"
+            stream: "billing_events"
+            payload:
+              msisdn: "{{request.msisdn}}"
+              service_code: "{{request.service_code}}"
+              timestamp: "{{timestamp}}"
+              tier: "{{subscriber.tier}}"
+
+    # --------------------------------------------------------------------------
+    # STAGE 15: AUDIT LOGGING (Compliance)
+    # --------------------------------------------------------------------------
+    - name: "audit_log"
+      type: "audit_logger"
+      description: "Maintain compliance audit trail"
+      enabled: true
+      async: true
+      config:
+        log_destination: "postgresql"
+        table: "audit_logs"
+        fields:
+          - request_id
+          - msisdn_hash
+          - operator_code
+          - service_code
+          - timestamp
+          - response_code
+          - processing_time_ms
+        retention_days: 90
+        encrypt: true
+
+  # ============================================================================
+  # ERROR HANDLING
+  # ============================================================================
+  error_handling:
+    global_error_handler:
+      - error_type: "timeout"
+        action: "return_error"
+        response_template: "timeout_error_template"
+        log_level: "error"
+
+      - error_type: "validation_error"
+        action: "return_error"
+        response_template: "validation_error_template"
+        log_level: "warn"
+
+      - error_type: "service_unavailable"
+        action: "retry_with_fallback"
+        max_retries: 2
+        fallback_backend: "session_manager_fallback"
+        log_level: "error"
+
+      - error_type: "unknown"
+        action: "return_error"
+        response_template: "generic_error_template"
+        log_level: "error"
+        alert: true
+
+  # ============================================================================
+  # MONITORING & OBSERVABILITY
+  # ============================================================================
+  observability:
+    tracing:
+      enabled: true
+      provider: "jaeger"
+      sample_rate: 1.0
+      propagation_format: "w3c"
+
+    metrics:
+      enabled: true
+      provider: "prometheus"
+      export_interval_seconds: 15
+      custom_metrics:
+        - name: "workflow_stage_duration"
+          type: "histogram"
+          labels: ["stage_name", "workflow_name"]
+
+    logging:
+      enabled: true
+      format: "json"
+      level: "info"
+      include_trace_id: true
+      include_span_id: true
+      fields:
+        - workflow_name
+        - workflow_version
+        - request_id
+        - duration_ms
+
+# ============================================================================
+# END OF WORKFLOW CONFIGURATION
+# ============================================================================

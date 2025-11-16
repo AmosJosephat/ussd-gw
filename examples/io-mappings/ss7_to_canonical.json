@@ -1,0 +1,323 @@
+{
+  "mapping_id": "ss7_map_to_canonical_ussd",
+  "version": "1.0.0",
+  "description": "Transform SS7 MAP USSD messages to canonical internal format",
+  "source_format": {
+    "protocol": "SS7/MAP",
+    "encoding": "GSM7/UCS2",
+    "standard": "3GPP TS 24.090"
+  },
+  "target_format": {
+    "protocol": "canonical_ussd",
+    "encoding": "UTF-8",
+    "schema_version": "1.0"
+  },
+
+  "metadata": {
+    "author": "USSD Gateway Team",
+    "last_updated": "2025-11-16",
+    "tested_with_operators": ["Safaricom", "Airtel", "Telkom Kenya"]
+  },
+
+  "mappings": [
+    {
+      "description": "Extract USSD string from MAP message",
+      "source": "$.map.ussd-DataCodingScheme.ussd-String",
+      "target": "$.input",
+      "transform": "decode_ussd_string",
+      "required": true,
+      "validation": {
+        "max_length": 182,
+        "encoding": ["GSM7", "UCS2", "UTF8"]
+      }
+    },
+    {
+      "description": "Extract MSISDN (calling party number)",
+      "source": "$.map.msisdn",
+      "target": "$.msisdn",
+      "transform": "normalize_msisdn_e164",
+      "required": true,
+      "validation": {
+        "pattern": "^\\+?[1-9]\\d{1,14}$"
+      }
+    },
+    {
+      "description": "Extract session/invoke ID",
+      "source": "$.tcap.invokeId",
+      "target": "$.session_id",
+      "transform": "format_session_id",
+      "required": true
+    },
+    {
+      "description": "Extract service code from USSD string",
+      "source": "$.map.ussd-DataCodingScheme.ussd-String",
+      "target": "$.service_code",
+      "transform": "extract_ussd_service_code",
+      "required": false,
+      "default": "*000#"
+    },
+    {
+      "description": "Determine request type from MAP message type",
+      "type": "conditional",
+      "conditions": [
+        {
+          "when": "$.tcap.messageType == 'BEGIN'",
+          "then": {
+            "target": "$.request_type",
+            "value": "Initial"
+          }
+        },
+        {
+          "when": "$.tcap.messageType == 'CONTINUE'",
+          "then": {
+            "target": "$.request_type",
+            "value": "Continue"
+          }
+        },
+        {
+          "when": "$.tcap.messageType == 'END'",
+          "then": {
+            "target": "$.request_type",
+            "value": "End"
+          }
+        },
+        {
+          "when": "$.tcap.messageType == 'ABORT'",
+          "then": {
+            "target": "$.request_type",
+            "value": "Cancel"
+          }
+        }
+      ],
+      "default": {
+        "target": "$.request_type",
+        "value": "Continue"
+      }
+    },
+    {
+      "description": "Extract operator code from Global Title",
+      "type": "lookup",
+      "source": "$.sccp.calledPartyAddress.globalTitle",
+      "lookup_table": "global_title_to_operator",
+      "lookup_key": "gt_prefix",
+      "target": "$.operator_code",
+      "default": "UNKNOWN"
+    },
+    {
+      "description": "Extract HLR address",
+      "source": "$.sccp.callingPartyAddress.globalTitle",
+      "target": "$.metadata.hlr_address",
+      "transform": "to_string",
+      "required": false
+    },
+    {
+      "description": "Extract IMSI if present",
+      "source": "$.map.imsi",
+      "target": "$.metadata.imsi",
+      "transform": "to_string",
+      "required": false
+    },
+    {
+      "description": "Compute timestamp",
+      "type": "computed",
+      "target": "$.timestamp",
+      "expression": "now()",
+      "format": "ISO8601"
+    },
+    {
+      "description": "Generate unique request ID",
+      "type": "computed",
+      "target": "$.request_id",
+      "expression": "uuid_v4()"
+    },
+    {
+      "description": "Set protocol identifier",
+      "type": "static",
+      "target": "$.protocol",
+      "value": "SS7"
+    },
+    {
+      "description": "Extract message reference number",
+      "source": "$.map.msisdn",
+      "target": "$.metadata.message_reference",
+      "transform": "generate_message_ref",
+      "required": false
+    },
+    {
+      "description": "Determine language from DCS",
+      "type": "conditional",
+      "source": "$.map.ussd-DataCodingScheme.dataCodingScheme",
+      "conditions": [
+        {
+          "when": "source & 0x0F == 0x00",
+          "then": {
+            "target": "$.metadata.language",
+            "value": "en"
+          }
+        },
+        {
+          "when": "source & 0x0F == 0x01",
+          "then": {
+            "target": "$.metadata.language",
+            "value": "sw"
+          }
+        }
+      ],
+      "default": {
+        "target": "$.metadata.language",
+        "value": "en"
+      }
+    },
+    {
+      "description": "Extract character encoding",
+      "type": "conditional",
+      "source": "$.map.ussd-DataCodingScheme.dataCodingScheme",
+      "conditions": [
+        {
+          "when": "(source & 0xF0) == 0x00",
+          "then": {
+            "target": "$.metadata.encoding",
+            "value": "GSM7"
+          }
+        },
+        {
+          "when": "(source & 0xF0) == 0x40",
+          "then": {
+            "target": "$.metadata.encoding",
+            "value": "UCS2"
+          }
+        },
+        {
+          "when": "(source & 0xF0) == 0x80",
+          "then": {
+            "target": "$.metadata.encoding",
+            "value": "UTF8"
+          }
+        }
+      ],
+      "default": {
+        "target": "$.metadata.encoding",
+        "value": "GSM7"
+      }
+    },
+    {
+      "description": "Extract SCCP metadata for debugging",
+      "type": "aggregate",
+      "target": "$.metadata.sccp_info",
+      "sources": [
+        "$.sccp.calledPartyAddress",
+        "$.sccp.callingPartyAddress",
+        "$.sccp.protocolClass"
+      ],
+      "aggregation": "merge_objects"
+    }
+  ],
+
+  "transformers": {
+    "decode_ussd_string": {
+      "type": "function",
+      "implementation": "builtin::decode_gsm7_or_ucs2",
+      "description": "Decode USSD string from GSM 7-bit or UCS2 to UTF-8"
+    },
+    "normalize_msisdn_e164": {
+      "type": "function",
+      "implementation": "builtin::normalize_e164",
+      "config": {
+        "default_country_code": "254",
+        "remove_leading_zero": true,
+        "add_plus_prefix": true
+      },
+      "description": "Normalize MSISDN to E.164 format"
+    },
+    "format_session_id": {
+      "type": "template",
+      "template": "ss7_{{invokeId}}_{{timestamp}}",
+      "description": "Format session ID from invoke ID and timestamp"
+    },
+    "extract_ussd_service_code": {
+      "type": "regex",
+      "pattern": "^(\\*[0-9#]+#)",
+      "replacement": "$1",
+      "fallback": "*000#",
+      "description": "Extract USSD service code (e.g., *123#)"
+    },
+    "generate_message_ref": {
+      "type": "function",
+      "implementation": "builtin::generate_ref",
+      "config": {
+        "prefix": "MSG",
+        "length": 12,
+        "include_timestamp": true
+      }
+    }
+  },
+
+  "lookup_tables": {
+    "global_title_to_operator": {
+      "type": "prefix_match",
+      "source": "redis",
+      "cache_ttl": 86400,
+      "entries": [
+        {
+          "gt_prefix": "25472",
+          "operator_code": "SAFARICOM",
+          "operator_name": "Safaricom Kenya"
+        },
+        {
+          "gt_prefix": "25473",
+          "operator_code": "AIRTEL",
+          "operator_name": "Airtel Kenya"
+        },
+        {
+          "gt_prefix": "25477",
+          "operator_code": "TELKOM",
+          "operator_name": "Telkom Kenya"
+        }
+      ]
+    }
+  },
+
+  "validation_rules": {
+    "pre_transform": [
+      {
+        "rule": "required_fields",
+        "fields": ["$.map.ussd-DataCodingScheme.ussd-String", "$.map.msisdn"],
+        "error_message": "Missing required SS7 MAP fields"
+      },
+      {
+        "rule": "max_ussd_length",
+        "field": "$.map.ussd-DataCodingScheme.ussd-String",
+        "max_bytes": 182,
+        "error_message": "USSD string exceeds maximum length"
+      }
+    ],
+    "post_transform": [
+      {
+        "rule": "valid_e164",
+        "field": "$.msisdn",
+        "pattern": "^\\+[1-9]\\d{1,14}$",
+        "error_message": "Invalid E.164 MSISDN format"
+      },
+      {
+        "rule": "valid_request_type",
+        "field": "$.request_type",
+        "allowed_values": ["Initial", "Continue", "End", "Cancel", "Timeout"],
+        "error_message": "Invalid request type"
+      }
+    ]
+  },
+
+  "error_handling": {
+    "on_missing_field": "use_default_or_null",
+    "on_invalid_encoding": "attempt_best_effort_decode",
+    "on_lookup_failure": "use_default_value",
+    "on_transformation_error": "log_and_continue"
+  },
+
+  "performance": {
+    "cache_transformed_results": true,
+    "cache_ttl_seconds": 60,
+    "enable_parallel_transformations": true,
+    "max_transformation_time_ms": 10
+  }
+}

@@ -1,0 +1,568 @@
+# Policy Definitions - Advanced Protocol Gateway
+# Enterprise-grade policies for routing, security, compliance, and performance
+
+# ============================================================================
+# RATE LIMITING POLICIES
+# ============================================================================
+rate_limiting_policies:
+  # Global system-wide rate limiting
+  - id: "global_rate_limit_policy"
+    name: "Global Rate Limiting"
+    description: "Protect system from overload with multi-level rate limiting"
+    enabled: true
+    version: "1.0"
+
+    rules:
+      # Level 1: Global throughput limit
+      - name: "global_rps_limit"
+        condition: "true"
+        limit_type: "token_bucket"
+        key_template: "global"
+        limit: 100000
+        window: "1s"
+        burst_size: 10000
+        on_exceeded:
+          action: "reject"
+          response_code: "SYSTEM_OVERLOAD"
+          retry_after_seconds: 1
+          metrics_label: "global_rate_limit"
+
+      # Level 2: Per-MSISDN limit (protect against individual abuse)
+      - name: "per_msisdn_limit"
+        condition: "true"
+        limit_type: "sliding_window"
+        key_template: "msisdn:{{request.msisdn}}"
+        limit: 10
+        window: "60s"
+        on_exceeded:
+          action: "throttle"
+          delay_ms: 500
+          response_code: "RATE_LIMIT_EXCEEDED"
+          message: "Too many requests. Please try again later."
+
+      # Level 3: Per-operator limit
+      - name: "per_operator_limit"
+        condition: "request.operator_code != null"
+        limit_type: "token_bucket"
+        key_template: "operator:{{request.operator_code}}"
+        limit: 50000
+        window: "1s"
+        burst_size: 5000
+        on_exceeded:
+          action: "queue"
+          queue_name: "overflow_queue"
+          max_queue_time_ms: 2000
+
+      # Level 4: Adaptive rate limiting (based on system load)
+      - name: "adaptive_rate_limit"
+        condition: "true"
+        limit_type: "adaptive"
+        key_template: "adaptive:{{request.operator_code}}"
+        base_limit: 10000
+        window: "1s"
+        adapt_to_metrics:
+          - metric: "cpu_usage"
+            threshold: 0.8
+            adjustment: "decrease_by_50_percent"
+          - metric: "memory_usage"
+            threshold: 0.85
+            adjustment: "decrease_by_30_percent"
+          - metric: "response_time_p95"
+            threshold: 100  # milliseconds
+            adjustment: "decrease_by_20_percent"
+
+      # Level 5: Premium tier bypass
+      - name: "premium_bypass"
+        condition: "subscriber.tier == 'PREMIUM' || subscriber.tier == 'VIP'"
+        limit_type: "fixed_window"
+        key_template: "premium:{{request.msisdn}}"
+        limit: 100
+        window: "60s"
+        priority: true  # Process first
+
+# ============================================================================
+# ROUTING POLICIES
+# ============================================================================
+routing_policies:
+  # Intelligent multi-factor routing
+  - id: "intelligent_routing_policy"
+    name: "Intelligent Routing Policy"
+    description: "Route traffic based on tier, geo, load, and A/B testing"
+    enabled: true
+    version: "1.0"
+
+    rules:
+      # Priority 1: Emergency/maintenance mode routing
+      - name: "maintenance_mode_routing"
+        condition: "system.maintenance_mode == true"
+        priority: 1000
+        targets:
+          - backend: "maintenance_response_server"
+            weight: 100
+            metadata:
+              mode: "maintenance"
+              message: "System under maintenance"
+
+      # Priority 2: VIP customer routing
+      - name: "vip_routing"
+        condition: "subscriber.tier == 'VIP'"
+        priority: 900
+        targets:
+          - backend: "session_manager_premium"
+            weight: 100
+            metadata:
+              sla: "p99_5ms"
+              dedicated_resources: true
+              cache_priority: "high"
+
+      # Priority 3: Geographic routing (reduced latency)
+      - name: "geo_routing"
+        condition: "geo.country != null"
+        priority: 800
+        targets:
+          # Kenya - route to Nairobi datacenter
+          - condition: "geo.country == 'KE'"
+            backend: "session_manager_nairobi"
+            weight: 80
+            metadata:
+              region: "east_africa"
+              datacenter: "nairobi_primary"
+          - condition: "geo.country == 'KE'"
+            backend: "session_manager_mombasa"
+            weight: 20
+            metadata:
+              region: "east_africa"
+              datacenter: "mombasa_secondary"
+
+          # Tanzania - route to Dar es Salaam
+          - condition: "geo.country == 'TZ'"
+            backend: "session_manager_dar"
+            weight: 100
+            metadata:
+              region: "east_africa"
+              datacenter: "dar_primary"
+
+          # Uganda - route to Kampala
+          - condition: "geo.country == 'UG'"
+            backend: "session_manager_kampala"
+            weight: 100
+            metadata:
+              region: "east_africa"
+              datacenter: "kampala_primary"
+
+      # Priority 4: A/B Testing / Canary Deployment
+      - name: "canary_deployment"
+        condition: "feature_flags.new_session_manager == true"
+        priority: 700
+        targets:
+          - backend: "session_manager_v2"
+            weight: 10
+            metadata:
+              version: "2.0.0"
+              features: ["enhanced_caching", "ml_predictions"]
+              canary: true
+          - backend: "session_manager_v1"
+            weight: 90
+            metadata:
+              version: "1.5.0"
+              stable: true
+
+      # Priority 5: Time-based routing (business hours)
+      - name: "time_based_routing"
+        condition: "time.business_hours == true"
+        priority: 600
+        targets:
+          - backend: "session_manager_business_hours"
+            weight: 100
+            metadata:
+              optimized_for: "high_load"
+
+      # Priority 6: Load-based routing
+      - name: "load_balanced_routing"
+        condition: "true"
+        priority: 500
+        selection_strategy: "weighted_round_robin"
+        targets:
+          - backend: "session_manager_pool_1"
+            weight: 40
+            health_check:
+              enabled: true
+              endpoint: "/health"
+              interval_seconds: 5
+          - backend: "session_manager_pool_2"
+            weight: 35
+            health_check:
+              enabled: true
+              endpoint: "/health"
+              interval_seconds: 5
+          - backend: "session_manager_pool_3"
+            weight: 25
+            health_check:
+              enabled: true
+              endpoint: "/health"
+              interval_seconds: 5
+
+      # Fallback routing
+      - name: "fallback_routing"
+        condition: "true"
+        priority: 1
+        targets:
+          - backend: "session_manager_fallback"
+            weight: 100
+            metadata:
+              fallback: true
+
+# ============================================================================
+# SECURITY POLICIES
+# ============================================================================
+security_policies:
+  - id: "comprehensive_security_policy"
+    name: "Comprehensive Security Policy"
+    description: "Protect against common security threats"
+    enabled: true
+    version: "1.0"
+
+    validations:
+      # SQL Injection prevention
+      - name: "sql_injection_check"
+        type: "sql_injection"
+        fields: ["input", "service_code", "msisdn"]
+        patterns:
+          - "(?i)(union|select|insert|update|delete|drop|create|alter)\\s"
+          - "--"
+          - "/\\*.*\\*/"
+          - "';\\s*(drop|delete|update)"
+        action: "reject"
+        response_code: "SECURITY_VIOLATION"
+        log_event: true
+        alert_severity: "critical"
+
+      # XSS prevention
+      - name: "xss_prevention"
+        type: "xss"
+        fields: ["input", "service_code"]
+        patterns:
+          - "<script[^>]*>.*?</script>"
+          - "javascript:"
+          - "on(load|error|click|mouseover)\\s*="
+        action: "sanitize"
+        sanitization_method: "strip_tags"
+        log_event: true
+
+      # Command injection prevention
+      - name: "command_injection_check"
+        type: "command_injection"
+        fields: ["input"]
+        patterns:
+          - "\\||&&|;|`|\\$\\("
+          - "\\.\\./"
+          - "/etc/passwd"
+        action: "reject"
+        response_code: "INVALID_INPUT"
+
+      # Required fields validation
+      - name: "required_fields"
+        type: "required_fields"
+        fields:
+          - name: "msisdn"
+            error_message: "MSISDN is required"
+          - name: "operator_code"
+            error_message: "Operator code is required"
+          - name: "service_code"
+            error_message: "Service code is required"
+        action: "reject"
+
+      # MSISDN format validation
+      - name: "msisdn_validation"
+        type: "format_validation"
+        field: "msisdn"
+        pattern: "^\\+?254[17]\\d{8}$"
+        error_message: "Invalid MSISDN format. Expected: +254XXXXXXXXX"
+        action: "reject"
+
+      # Character encoding validation
+      - name: "character_encoding_check"
+        type: "encoding_validation"
+        fields: ["input"]
+        allowed_encodings: ["UTF-8", "GSM7", "UCS2"]
+        max_length: 182  # USSD max length
+        action: "reject"
+
+# ============================================================================
+# COMPLIANCE POLICIES (GDPR, PCI-DSS, Local regulations)
+# ============================================================================
+compliance_policies:
+  - id: "gdpr_compliance_policy"
+    name: "GDPR Compliance Policy"
+    description: "EU General Data Protection Regulation compliance"
+    enabled: true
+    version: "1.0"
+
+    rules:
+      # PII Masking in logs
+      - name: "pii_masking"
+        type: "data_masking"
+        fields:
+          - name: "msisdn"
+            mask_pattern: "***-***-{{last_4}}"
+            apply_to: ["logs", "metrics", "traces"]
+          - name: "account_number"
+            mask_pattern: "****-****-****-{{last_4}}"
+            apply_to: ["logs"]
+          - name: "email"
+            mask_pattern: "{{first_3}}***@***{{domain}}"
+            apply_to: ["logs"]
+
+      # Data retention
+      - name: "data_retention"
+        type: "retention_policy"
+        rules:
+          - data_type: "session_data"
+            max_age_days: 30
+            deletion_method: "hard_delete"
+          - data_type: "audit_logs"
+            max_age_days: 90
+            deletion_method: "archive_then_delete"
+          - data_type: "analytics"
+            max_age_days: 365
+            deletion_method: "aggregate_then_delete"
+
+      # Right to erasure (Right to be forgotten)
+      - name: "right_to_erasure"
+        type: "erasure_policy"
+        enabled: true
+        erasure_scope:
+          - "session_history"
+          - "user_preferences"
+          - "cached_data"
+        exclude_from_erasure:
+          - "financial_transactions"
+          - "legal_audit_trail"
+
+      # Consent management
+      - name: "consent_tracking"
+        type: "consent_policy"
+        required_consents:
+          - "data_processing"
+          - "analytics"
+        optional_consents:
+          - "marketing"
+          - "third_party_sharing"
+
+  - id: "pci_dss_compliance_policy"
+    name: "PCI-DSS Compliance Policy"
+    description: "Payment Card Industry Data Security Standard"
+    enabled: true
+    version: "1.0"
+
+    rules:
+      # Encryption at rest
+      - name: "encrypt_sensitive_data"
+        type: "encryption"
+        fields:
+          - "card_number"
+          - "cvv"
+          - "pin"
+        encryption_method: "AES256"
+        key_rotation_days: 90
+
+      # Access logging
+      - name: "access_audit_logging"
+        type: "audit_logging"
+        log_all_access: true
+        retention_days: 365
+        include_fields:
+          - "user_id"
+          - "timestamp"
+          - "action"
+          - "ip_address"
+          - "resource_accessed"
+
+# ============================================================================
+# TRANSFORMATION POLICIES
+# ============================================================================
+transformation_policies:
+  - id: "data_transformation_policy"
+    name: "Data Transformation Policy"
+    description: "Standard transformations for all requests"
+    enabled: true
+    version: "1.0"
+
+    transformations:
+      # Normalize MSISDN to E.164 format
+      - name: "normalize_msisdn"
+        field: "msisdn"
+        transformation_type: "regex_replace"
+        pattern: "^0([17]\\d{8})$"
+        replacement: "+254$1"
+
+      # Uppercase service code
+      - name: "uppercase_service_code"
+        field: "service_code"
+        transformation_type: "uppercase"
+
+      # Trim whitespace
+      - name: "trim_input"
+        fields: ["input", "service_code"]
+        transformation_type: "trim"
+
+      # Decode URL encoding
+      - name: "url_decode"
+        fields: ["input"]
+        transformation_type: "url_decode"
+        condition: "protocol == 'http_rest'"
+
+# ============================================================================
+# CACHING POLICIES
+# ============================================================================
+caching_policies:
+  - id: "intelligent_caching_policy"
+    name: "Intelligent Caching Policy"
+    description: "Multi-level caching with smart invalidation"
+    enabled: true
+    version: "1.0"
+
+    rules:
+      # Cache subscriber information
+      - name: "cache_subscriber_info"
+        cache_type: "subscriber_lookup"
+        key_template: "subscriber:{{msisdn}}"
+        ttl_seconds: 3600
+        cache_levels: ["L1", "L2"]
+        invalidation_events:
+          - "subscriber_updated"
+          - "subscriber_deleted"
+
+      # Cache balance information (shorter TTL)
+      - name: "cache_balance"
+        cache_type: "balance_lookup"
+        key_template: "balance:{{account_id}}"
+        ttl_seconds: 60
+        cache_levels: ["L1"]
+        invalidation_events:
+          - "transaction_completed"
+
+      # Cache menu definitions
+      - name: "cache_menus"
+        cache_type: "menu_definition"
+        key_template: "menu:{{menu_id}}:{{version}}"
+        ttl_seconds: 86400  # 24 hours
+        cache_levels: ["L1", "L2"]
+        invalidation_events:
+          - "menu_updated"
+
+      # Cache API responses
+      - name: "cache_api_responses"
+        cache_type: "api_response"
+        key_template: "api:{{endpoint}}:{{hash(params)}}"
+        ttl_seconds: 300
+        condition: "request.method == 'GET'"
+        cache_levels: ["L1", "L2"]
+
+# ============================================================================
+# CIRCUIT BREAKER POLICIES
+# ============================================================================
+circuit_breaker_policies:
+  - id: "service_protection_policy"
+    name: "Service Protection Policy"
+    description: "Circuit breakers for external dependencies"
+    enabled: true
+    version: "1.0"
+
+    breakers:
+      # Session Manager circuit breaker
+      - name: "session_manager_breaker"
+        service: "session_manager"
+        failure_threshold: 5
+        success_threshold: 2
+        timeout_seconds: 60
+        half_open_max_requests: 3
+        on_open:
+          action: "route_to_fallback"
+          fallback_service: "session_manager_fallback"
+          alert: true
+
+      # Integration Hub circuit breaker
+      - name: "integration_hub_breaker"
+        service: "integration_hub"
+        failure_threshold: 3
+        success_threshold: 2
+        timeout_seconds: 30
+        on_open:
+          action: "return_cached_response"
+          alert: true
+
+      # External API circuit breakers
+      - name: "core_banking_breaker"
+        service: "core_banking_api"
+        failure_threshold: 5
+        success_threshold: 3
+        timeout_seconds: 120
+        on_open:
+          action: "return_default_response"
+          default_response:
+            status: "unavailable"
+            message: "Service temporarily unavailable"
+
+# ============================================================================
+# MONITORING & ALERTING POLICIES
+# ============================================================================
+monitoring_policies:
+  - id: "observability_policy"
+    name: "Observability Policy"
+    description: "Comprehensive monitoring and alerting"
+    enabled: true
+    version: "1.0"
+
+    alerts:
+      # High error rate alert
+      - name: "high_error_rate"
+        condition: "error_rate_5m > 0.05"
+        severity: "critical"
+        notification_channels:
+          - "pagerduty"
+          - "slack"
+          - "email"
+        message: "Error rate exceeded 5% in last 5 minutes"
+
+      # High latency alert
+      - name: "high_latency"
+        condition: "p95_latency_1m > 100"
+        severity: "warning"
+        notification_channels:
+          - "slack"
+        message: "P95 latency exceeded 100ms"
+
+      # Circuit breaker open alert
+      - name: "circuit_breaker_open"
+        condition: "circuit_breaker.state == 'OPEN'"
+        severity: "critical"
+        notification_channels:
+          - "pagerduty"
+          - "slack"
+
+      # Rate limit exceeded frequently
+      - name: "rate_limit_abuse"
+        condition: "rate_limit_violations_10m > 100"
+        severity: "warning"
+        notification_channels:
+          - "slack"
+
+    metrics:
+      # Business metrics
+      - name: "requests_by_tier"
+        type: "counter"
+        labels: ["tier", "operator"]
+
+      - name: "revenue_potential"
+        type: "gauge"
+        labels: ["service_code", "tier"]
+
+      # Technical metrics
+      - name: "policy_evaluation_duration"
+        type: "histogram"
+        labels: ["policy_id"]
+
+      - name: "transformation_duration"
+        type: "histogram"
+        labels: ["transformation_type"]

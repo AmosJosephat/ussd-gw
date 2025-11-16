@@ -1,0 +1,257 @@
+{
+  "mapping_id": "canonical_ussd_to_ss7_map",
+  "version": "1.0.0",
+  "description": "Transform canonical internal format to SS7 MAP USSD response",
+  "source_format": {
+    "protocol": "canonical_ussd",
+    "encoding": "UTF-8",
+    "schema_version": "1.0"
+  },
+  "target_format": {
+    "protocol": "SS7/MAP",
+    "encoding": "GSM7/UCS2",
+    "standard": "3GPP TS 24.090"
+  },
+
+  "metadata": {
+    "author": "USSD Gateway Team",
+    "last_updated": "2025-11-16",
+    "purpose": "Response transformation"
+  },
+
+  "mappings": [
+    {
+      "description": "Encode response message to USSD string",
+      "source": "$.message",
+      "target": "$.map.ussd-DataCodingScheme.ussd-String",
+      "transform": "encode_to_gsm7_or_ucs2",
+      "required": true,
+      "validation": {
+        "max_length": 182
+      }
+    },
+    {
+      "description": "Set data coding scheme based on content",
+      "type": "conditional",
+      "source": "$.message",
+      "conditions": [
+        {
+          "when": "contains_non_gsm7_characters(source)",
+          "then": {
+            "target": "$.map.ussd-DataCodingScheme.dataCodingScheme",
+            "value": 0x48,
+            "description": "UCS2 encoding (16-bit)"
+          }
+        },
+        {
+          "when": "true",
+          "then": {
+            "target": "$.map.ussd-DataCodingScheme.dataCodingScheme",
+            "value": 0x0F,
+            "description": "GSM 7-bit default alphabet"
+          }
+        }
+      ]
+    },
+    {
+      "description": "Set TCAP message type based on response type",
+      "type": "conditional",
+      "source": "$.response_type",
+      "conditions": [
+        {
+          "when": "source == 'Continue'",
+          "then": {
+            "target": "$.tcap.messageType",
+            "value": "CONTINUE",
+            "description": "Session continues, awaiting user input"
+          }
+        },
+        {
+          "when": "source == 'End'",
+          "then": {
+            "target": "$.tcap.messageType",
+            "value": "END",
+            "description": "Session terminated"
+          }
+        }
+      ],
+      "default": {
+        "target": "$.tcap.messageType",
+        "value": "CONTINUE"
+      }
+    },
+    {
+      "description": "Copy session ID to invoke ID",
+      "source": "$.session_id",
+      "target": "$.tcap.invokeId",
+      "transform": "extract_invoke_id_from_session",
+      "required": true
+    },
+    {
+      "description": "Set MAP operation code for USSD response",
+      "type": "conditional",
+      "source": "$.response_type",
+      "conditions": [
+        {
+          "when": "source == 'Continue'",
+          "then": {
+            "target": "$.map.operationCode",
+            "value": 60,
+            "description": "UnstructuredSS-Request"
+          }
+        },
+        {
+          "when": "source == 'End'",
+          "then": {
+            "target": "$.map.operationCode",
+            "value": 61,
+            "description": "UnstructuredSS-Notify"
+          }
+        }
+      ]
+    },
+    {
+      "description": "Set SCCP called party address from original calling party",
+      "source": "$.metadata.hlr_address",
+      "target": "$.sccp.calledPartyAddress.globalTitle",
+      "transform": "to_string",
+      "required": false
+    },
+    {
+      "description": "Set SCCP calling party address (gateway GT)",
+      "type": "static",
+      "target": "$.sccp.callingPartyAddress.globalTitle",
+      "value": "${GATEWAY_GLOBAL_TITLE}",
+      "description": "Gateway's own global title"
+    },
+    {
+      "description": "Set SCCP protocol class",
+      "type": "static",
+      "target": "$.sccp.protocolClass",
+      "value": 1,
+      "description": "Connection-oriented with return on error"
+    },
+    {
+      "description": "Set SCCP subsystem number for HLR",
+      "type": "static",
+      "target": "$.sccp.calledPartyAddress.subsystemNumber",
+      "value": 6,
+      "description": "HLR subsystem"
+    },
+    {
+      "description": "Set application context",
+      "type": "static",
+      "target": "$.tcap.applicationContext",
+      "value": "0.4.0.0.1.0.21.3",
+      "description": "networkUnstructuredSsContext-v2"
+    },
+    {
+      "description": "Compute message length",
+      "type": "computed",
+      "target": "$.map.ussd-DataCodingScheme.length",
+      "expression": "byte_length($.map.ussd-DataCodingScheme.ussd-String)"
+    },
+    {
+      "description": "Set component type",
+      "type": "conditional",
+      "source": "$.response_type",
+      "conditions": [
+        {
+          "when": "source == 'Continue'",
+          "then": {
+            "target": "$.tcap.componentType",
+            "value": "ReturnResult"
+          }
+        },
+        {
+          "when": "source == 'End'",
+          "then": {
+            "target": "$.tcap.componentType",
+            "value": "ReturnResultLast"
+          }
+        }
+      ]
+    },
+    {
+      "description": "Add gateway metadata",
+      "type": "aggregate",
+      "target": "$.metadata.gateway_info",
+      "values": {
+        "gateway_id": "${GATEWAY_ID}",
+        "gateway_version": "${GATEWAY_VERSION}",
+        "processing_time_ms": "{{elapsed_time_ms}}",
+        "timestamp": "{{now()}}"
+      }
+    }
+  ],
+
+  "transformers": {
+    "encode_to_gsm7_or_ucs2": {
+      "type": "function",
+      "implementation": "builtin::encode_gsm7_or_ucs2",
+      "config": {
+        "prefer_gsm7": true,
+        "fallback_to_ucs2": true,
+        "truncate_if_too_long": false,
+        "error_on_overflow": true
+      },
+      "description": "Encode UTF-8 text to GSM 7-bit or UCS2"
+    },
+    "extract_invoke_id_from_session": {
+      "type": "regex",
+      "pattern": "ss7_([0-9]+)_.*",
+      "replacement": "$1",
+      "description": "Extract invoke ID from session ID"
+    }
+  },
+
+  "validation_rules": {
+    "pre_transform": [
+      {
+        "rule": "required_fields",
+        "fields": ["$.message", "$.session_id", "$.response_type"],
+        "error_message": "Missing required canonical response fields"
+      },
+      {
+        "rule": "valid_response_type",
+        "field": "$.response_type",
+        "allowed_values": ["Continue", "End"],
+        "error_message": "Invalid response type"
+      }
+    ],
+    "post_transform": [
+      {
+        "rule": "max_ussd_length",
+        "field": "$.map.ussd-DataCodingScheme.ussd-String",
+        "max_bytes": 182,
+        "error_message": "Encoded USSD string exceeds maximum length",
+        "action": "truncate_and_warn"
+      },
+      {
+        "rule": "valid_dcs",
+        "field": "$.map.ussd-DataCodingScheme.dataCodingScheme",
+        "allowed_values": [15, 72],
+        "error_message": "Invalid data coding scheme"
+      },
+      {
+        "rule": "valid_tcap_message_type",
+        "field": "$.tcap.messageType",
+        "allowed_values": ["CONTINUE", "END"],
+        "error_message": "Invalid TCAP message type for response"
+      }
+    ]
+  },
+
+  "performance": {
+    "cache_encoding_results": true,
+    "cache_ttl_seconds": 30,
+    "enable_parallel_transformations": false,
+    "max_transformation_time_ms": 5
+  },
+
+  "error_handling": {
+    "on_encoding_error": "fallback_to_ucs2",
+    "on_overflow": "truncate_with_ellipsis",
+    "on_invalid_session_id": "log_and_use_default"
+  }
+}

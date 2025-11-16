@@ -6,12 +6,26 @@ A cutting-edge, production-ready USSD (Unstructured Supplementary Service Data) 
 
 ## 🎯 Key Features
 
+### Performance
 - **Ultra-Low Latency**: <5ms gateway latency, <100ms end-to-end
 - **High Throughput**: 100K+ requests/second per instance
 - **Massive Scale**: Support for 1M+ concurrent sessions
 - **99.99% Availability**: Production-grade fault tolerance
-- **Multi-Protocol**: SS7/MAP, HTTP/REST, SMPP support
+
+### Enterprise-Grade Capabilities ⭐
+- **No-Code Workflow Builder**: Declarative YAML/JSON workflow configuration
+- **Policy-as-Code**: Runtime policies for routing, security, compliance
+- **Dynamic Protocol Transformation**: Automatic I/O mapping between protocols
+- **Adaptive Routing**: Content-based, weighted, geo-aware, A/B testing
+- **Multi-Level Caching**: L1 (memory) → L2 (Redis) → L3 (PostgreSQL)
+- **Circuit Breakers**: Fail-fast patterns with automatic recovery
+- **Real-Time Analytics**: Comprehensive metrics, traces, and logs
+
+### Protocols & Standards
+- **Multi-Protocol**: SS7/MAP, HTTP/REST, SMPP, gRPC, WebSocket
+- **Specification Management**: OpenAPI, Protocol Buffers, JSON Schema
 - **Cloud-Native**: Kubernetes-ready, service mesh compatible
+- **Compliance**: GDPR, PCI-DSS, audit logging
 
 ## 🏗️ Architecture
 
@@ -33,15 +47,24 @@ A cutting-edge, production-ready USSD (Unstructured Supplementary Service Data) 
 └─────────────────────────────────────────────┘
 ```
 
-### 1. **Protocol Gateway**
-Entry point for all USSD traffic with multi-protocol support.
+### 1. **Protocol Gateway** ⭐ _ENHANCED_
+Entry point for all USSD traffic with **enterprise-grade workflow orchestration**.
 
-**Key Capabilities:**
+**Core Capabilities:**
 - USSD over SS7 (MAP/TCAP)
 - HTTP/REST APIs
 - SMPP protocol
 - Protocol normalization
 - Rate limiting & DDoS protection
+
+**🎯 Advanced Features:**
+- **Workflow Orchestration Engine**: No-code declarative workflows (YAML/JSON)
+- **Policy Engine**: Runtime policies for routing, security, compliance
+- **Specification Registry**: OpenAPI/Protobuf validation & versioning
+- **I/O Mapping Engine**: Declarative protocol transformation
+- **Adaptive Routing**: Content-based, weighted, geo-routing
+- **Request/Response Enrichment**: Contextual data injection
+- **Multi-level Analytics**: Real-time metrics & telemetry
 
 **Performance Target**: <5ms p99 latency, 100K req/sec
 
@@ -94,6 +117,16 @@ Resilient gateway to external services with circuit breaking.
 | [02-SESSION-MANAGER-SERVICE.md](./docs/02-SESSION-MANAGER-SERVICE.md) | Session Manager detailed design |
 | [03-MENU-ENGINE-SERVICE.md](./docs/03-MENU-ENGINE-SERVICE.md) | Menu Engine detailed design |
 | [04-INTEGRATION-HUB-SERVICE.md](./docs/04-INTEGRATION-HUB-SERVICE.md) | Integration Hub detailed design |
+| [05-ADVANCED-PROTOCOL-GATEWAY-FEATURES.md](./docs/05-ADVANCED-PROTOCOL-GATEWAY-FEATURES.md) | ⭐ **NEW** - Workflow engine, policy system, I/O mapping |
+
+### Configuration Examples
+
+| Example | Description |
+|---------|-------------|
+| [workflow-config-example.yaml](./examples/workflow-config-example.yaml) | Complete 15-stage workflow configuration |
+| [policy-definitions.yaml](./examples/policy-definitions.yaml) | Rate limiting, routing, security, compliance policies |
+| [ss7_to_canonical.json](./examples/io-mappings/ss7_to_canonical.json) | SS7/MAP → Canonical format transformation |
+| [canonical_to_ss7.json](./examples/io-mappings/canonical_to_ss7.json) | Canonical → SS7/MAP response transformation |
 
 ## 🛠️ Technology Stack
 
